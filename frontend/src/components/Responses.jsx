@@ -348,7 +348,7 @@ export default function Responses({ document: doc }) {
                   <option value="">— Sin plantilla —</option>
                   {templates.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.name} · {TPL_CAT_LABEL[t.category] || t.category}
+                      {`${t.name} · ${TPL_CAT_LABEL[t.category] || t.category}`}
                     </option>
                   ))}
                 </select>

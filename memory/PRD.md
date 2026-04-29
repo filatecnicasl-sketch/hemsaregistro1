@@ -20,32 +20,28 @@
 - **Design**: Swiss Brutalist light theme, Outfit (display) + IBM Plex Sans (body)
 - **Storage**: archivos adjuntos en Emergent Object Storage (`gestion-documental/documents/{doc_id}/{uuid}.{ext}`)
 
-## Implemented Features (2026-04-29)
-### Backend
-- Auth: register, login (con anti brute-force 5 intentos / 15 min), `/me`, logout
-- RBAC con dependency `require_roles(...)`
-- Usuarios: list (todos auth), create/update/delete (admin)
-- Documentos: CRUD + filtros (status, department, assigned_to, medium, priority, q, inbox), número de entrada autoincremental `REG-YYYY-NNNNN`
-- Reparto: assign-department (recepcionista/admin) → status `repartido` + notifica a jefes
-- Asignación: assign-person (recepcionista/admin/jefe con restricción de dept) → status `asignado` + notifica al usuario
-- Cambios de estado: recibido / repartido / asignado / en_proceso / finalizado / archivado
-- Adjuntos: upload (multipart, max 25MB) + download via Emergent Object Storage
-- Comentarios y trazabilidad (history) por documento
-- Notificaciones in-app (list, mark-read, mark-all)
-- Stats dashboard con timeline 7 días, breakdown por estado/dept/prioridad
-- Seed automático: admin + 7 usuarios demo
+## Implemented Features
+### 2026-04-29 (v1)
+- Auth JWT, RBAC, brute-force lockout
+- CRUD documentos + reparto/asignación/estados
+- Adjuntos via Emergent Object Storage
+- Comentarios, historial, notificaciones, dashboard
+- Gestión de usuarios (admin)
 
-### Frontend
-- Login / Register (split-screen Swiss layout)
-- Dashboard con KPIs, mini gráfica 7 días, breakdown estados/depts y actividad reciente
-- Listado de documentos con filtros y búsqueda
-- Formulario de registro de entrada con subida de archivo
-- Detalle de documento con paneles de reparto, asignación, cambio de estado, eliminar
-- Tabs de Comentarios e Historial
-- Mi Bandeja (asignados a mí)
-- Página de Usuarios (admin) con dialogo crear/editar
-- Centro de Notificaciones
-- Sidebar + topbar con búsqueda + dropdown de usuario
+### 2026-04-29 (v2 - branding Hemsa)
+- Logotipo Hemsa, color corporativo verde (#1FB877) en toda la app
+- Favicon y title actualizados
+
+### 2026-04-29 (v3 - plantillas + firma digital)
+- Módulo de plantillas de respuesta con CRUD (admin/jefe/recepcionista pueden editar; admin elimina)
+- 5 plantillas semilla: acuse, requerimiento, resolución, notificación, informe
+- Marcadores `{{numero_entrada}} {{remitente}} {{asunto}} {{usuario}} {{departamento}} {{fecha_actual}} {{fecha_recepcion}}` con interpolación
+- Pestaña Respuestas en detalle del documento (borrador → firmado)
+- Firma digital con lienzo HTML5 (ratón + táctil), PNG base64
+- Hash SHA-256 de integridad sobre id + doc_id + subject + body + user_id + user_name + signed_at
+- Vista "Imprimir" con membrete Hemsa, contenido y firma manuscrita
+- Cascada al eliminar documento: respuestas, comentarios e historial
+- Tests: 15/15 nuevos pasados, 28 regresión OK
 
 ## Test Credentials (`/app/memory/test_credentials.md`)
 - admin@gestion.com / admin123

@@ -516,6 +516,7 @@ async def delete_document(doc_id: str, user: dict = Depends(require_roles("admin
         raise HTTPException(status_code=404, detail="Documento no encontrado")
     await db.document_history.delete_many({"document_id": doc_id})
     await db.comments.delete_many({"document_id": doc_id})
+    await db.responses.delete_many({"document_id": doc_id})
     return {"ok": True}
 
 
