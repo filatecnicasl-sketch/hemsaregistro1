@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 2 - Tested new Templates + Responses + Digital Signature module. Backend: 15/15 pytest pass (templates RBAC, seed presence, response CRUD, signing flow w/ SHA-256 hash, double-sign rejection, invalid image rejection, history events, role-based access). Frontend: full e2e Playwright pass - sidebar Plantillas link visible for all roles, TemplatesPage admin can create/delete (delete hidden for personal), DocumentDetail Respuestas tab works, template selector interpolates placeholders ({numero_entrada}, {remitente}, {asunto}, {usuario}, {departamento}, {fecha_actual}, {fecha_recepcion}), SignaturePad accepts canvas drawing, submission produces FIRMADA badge + signature image + visible SHA-256 hash, edit button disappears once signed, print button appears.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "DELETE /api/documents/{id}", "issue": "When a document is deleted, related responses are NOT cascaded (only comments + history are). Orphan response docs may remain in db.responses. Low priority since UI hides them, but recommended cleanup."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Responses dialog", "issues": ["Template selector uses a native HTML <select> instead of shadcn Select (matches pre-existing pattern on NewDocumentPage). Visual inconsistency only."]},
+      {"screen": "Responses dialog template <option>", "issues": ["React hydration warning on console: '<span> cannot be a child of <option>' caused by emergent dev tooling injecting <span> wrappers inside <option> elements with template names. Non-blocking, but pollutes console. The ev-tooling injection happens because JSX renders `{t.name} · {label}` directly inside <option>; consider concatenating into a single string to suppress."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_templates_responses.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/templates_responses_results.xml"
+  ],
+  "action_items": [
+    "(Optional/Low) Cascade delete responses when a document is deleted in DELETE /api/documents/{id} - add `await db.responses.delete_many({\"document_id\": doc_id})`.",
+    "(Optional/Cosmetic) Concatenate template name into a single string for <option> children to silence console hydration warning, e.g. {`${t.name} · ${TPL_CAT_LABEL[t.category] || t.category}`}."
+  ],
+  "critical_code_review_comments": [
+    "Signature image size limit (1.5MB) and data:image prefix check are correctly enforced.",
+    "Hash payload concatenates id|doc_id|subject|body|user_id|user_name|signed_at - tamper-evident; suggest also persisting the canonical payload string (or version field) for future integrity reverification.",
+    "_can_view_doc gives jefe_departamento access when doc has no department yet (doc.department is None) - intentional for un-routed inbox; documented behaviour.",
+    "server.py is now ~1090 lines - approaching split threshold; consider routers/templates.py and routers/responses.py.",
+    "PATCH /api/templates/{id} requires ALL fields (name, category, subject, body) because it reuses TemplateIn (no Optional). True PATCH semantics would allow partial updates - acceptable but worth noting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_templates_responses.py (new)"
+  ],
+  "success_rate": {"backend": "100% (15/15 new + 28/28 regression suite still valid)", "frontend": "100% of new flows tested"},
+  "test_credentials": "Verified working: admin@gestion.com/admin123, recepcion@gestion.com/demo123, jefe.tecnico@gestion.com/demo123, personal2@gestion.com/demo123",
+  "seed_data_creation": "Backend seed_templates inserts 5 default templates (acuse, requerimiento, resolucion, notificacion, informe) on startup if collection empty. Verified in tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All new endpoints/templates/responses are fully covered in /app/backend/tests/test_templates_responses.py - reuse for regression. Use VALID_PNG constant for signature image fixtures. Frontend signature pad: use canvas.bounding_box() + page.mouse.move/down/up to draw strokes. Note that <option> elements get React hydration warnings from emergent dev tooling - ignore. The Respuestas tab testid is 'docdetail-tab-responses'. To set up a doc accessible to personal2 you must POST /assign-department (tecnico) AND /assign-person."
+}

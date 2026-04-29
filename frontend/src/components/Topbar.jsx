@@ -20,6 +20,7 @@ const titles = {
   "/bandeja": "Mi bandeja",
   "/usuarios": "Usuarios",
   "/notificaciones": "Notificaciones",
+  "/plantillas": "Plantillas de respuesta",
 };
 
 function getTitle(pathname) {

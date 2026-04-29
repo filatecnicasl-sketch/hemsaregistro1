@@ -10,12 +10,14 @@ import {
   Bell,
   LogOut,
   Plus,
+  Layers,
 } from "lucide-react";
 
 const navItems = [
   { to: "/", label: "Panel", icon: LayoutGrid, roles: null, end: true, testid: "nav-dashboard" },
   { to: "/documentos", label: "Documentos", icon: FileText, roles: null, testid: "nav-documents" },
   { to: "/bandeja", label: "Mi Bandeja", icon: Inbox, roles: null, testid: "nav-inbox" },
+  { to: "/plantillas", label: "Plantillas", icon: Layers, roles: null, testid: "nav-templates" },
   { to: "/notificaciones", label: "Notificaciones", icon: Bell, roles: null, testid: "nav-notifications" },
   { to: "/usuarios", label: "Usuarios", icon: Users, roles: ["admin"], testid: "nav-users" },
 ];

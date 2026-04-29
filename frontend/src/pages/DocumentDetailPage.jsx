@@ -4,6 +4,7 @@ import Layout from "../components/Layout";
 import api, { formatApiError, API } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
 import { StatusBadge, PriorityBadge } from "../components/StatusBadge";
+import Responses from "../components/Responses";
 import {
   DEPARTMENTS,
   DEPT_LABEL,
@@ -25,6 +26,7 @@ import {
   Activity,
   Building2,
   Paperclip,
+  FileSignature,
 } from "lucide-react";
 
 export default function DocumentDetailPage() {
@@ -281,23 +283,32 @@ export default function DocumentDetailPage() {
             )}
           </div>
 
-          {/* Tabs: Comments & History */}
+          {/* Tabs: Comments, Responses & History */}
           <div className="bg-white border border-border/60">
-            <div className="flex items-center border-b border-border/60">
+            <div className="flex items-center border-b border-border/60 overflow-x-auto">
               <button
                 data-testid="docdetail-tab-comments"
                 onClick={() => setTab("comments")}
-                className={`flex items-center gap-2 px-5 py-3 text-sm border-b-2 transition-colors ${
-                  tab === "comments" ? "border-black text-slate-900 font-medium" : "border-transparent text-slate-500"
+                className={`flex items-center gap-2 px-5 py-3 text-sm border-b-2 transition-colors whitespace-nowrap ${
+                  tab === "comments" ? "border-brand text-slate-900 font-medium" : "border-transparent text-slate-500"
                 }`}
               >
                 <MessageSquare className="w-4 h-4" /> Comentarios ({comments.length})
               </button>
               <button
+                data-testid="docdetail-tab-responses"
+                onClick={() => setTab("responses")}
+                className={`flex items-center gap-2 px-5 py-3 text-sm border-b-2 transition-colors whitespace-nowrap ${
+                  tab === "responses" ? "border-brand text-slate-900 font-medium" : "border-transparent text-slate-500"
+                }`}
+              >
+                <FileSignature className="w-4 h-4" /> Respuestas
+              </button>
+              <button
                 data-testid="docdetail-tab-history"
                 onClick={() => setTab("history")}
-                className={`flex items-center gap-2 px-5 py-3 text-sm border-b-2 transition-colors ${
-                  tab === "history" ? "border-black text-slate-900 font-medium" : "border-transparent text-slate-500"
+                className={`flex items-center gap-2 px-5 py-3 text-sm border-b-2 transition-colors whitespace-nowrap ${
+                  tab === "history" ? "border-brand text-slate-900 font-medium" : "border-transparent text-slate-500"
                 }`}
               >
                 <History className="w-4 h-4" /> Historial ({history.length})
@@ -305,6 +316,7 @@ export default function DocumentDetailPage() {
             </div>
 
             <div className="p-6">
+              {tab === "responses" && <Responses document={doc} />}
               {tab === "comments" && (
                 <div>
                   <form onSubmit={addComment} className="flex gap-2 mb-5">

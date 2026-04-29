@@ -8,6 +8,7 @@ import os
 import uuid
 import logging
 import secrets
+import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
@@ -672,6 +673,208 @@ async def list_history(doc_id: str, _: dict = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
+# Templates (response templates)
+# ---------------------------------------------------------------------------
+VALID_TEMPLATE_CATEGORIES = {"acuse", "requerimiento", "resolucion", "notificacion", "informe", "otro"}
+
+
+class TemplateIn(BaseModel):
+    name: str
+    category: str = "otro"
+    subject: str
+    body: str
+
+
+@api_router.get("/templates")
+async def list_templates(_: dict = Depends(get_current_user)):
+    cursor = db.templates.find({}, {"_id": 0}).sort("name", 1)
+    return await cursor.to_list(500)
+
+
+@api_router.post("/templates")
+async def create_template(body: TemplateIn, user: dict = Depends(require_roles("admin", "jefe_departamento", "recepcionista"))):
+    if body.category not in VALID_TEMPLATE_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Categoría inválida")
+    t = {
+        "id": str(uuid.uuid4()),
+        "name": body.name,
+        "category": body.category,
+        "subject": body.subject,
+        "body": body.body,
+        "created_by": user["id"],
+        "created_by_name": user["name"],
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.templates.insert_one(t)
+    t.pop("_id", None)
+    return t
+
+
+@api_router.patch("/templates/{tid}")
+async def update_template(tid: str, body: TemplateIn, _: dict = Depends(require_roles("admin", "jefe_departamento", "recepcionista"))):
+    if body.category not in VALID_TEMPLATE_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Categoría inválida")
+    update = {
+        "name": body.name,
+        "category": body.category,
+        "subject": body.subject,
+        "body": body.body,
+        "updated_at": now_iso(),
+    }
+    res = await db.templates.update_one({"id": tid}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+    return await db.templates.find_one({"id": tid}, {"_id": 0})
+
+
+@api_router.delete("/templates/{tid}")
+async def delete_template(tid: str, _: dict = Depends(require_roles("admin"))):
+    res = await db.templates.delete_one({"id": tid})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Responses (with digital signature)
+# ---------------------------------------------------------------------------
+class ResponseCreate(BaseModel):
+    template_id: Optional[str] = None
+    subject: str
+    body: str
+
+
+class ResponseUpdate(BaseModel):
+    subject: Optional[str] = None
+    body: Optional[str] = None
+
+
+class ResponseSignIn(BaseModel):
+    signature_image: str  # base64 data URL (image/png)
+
+
+def _can_view_doc(doc: dict, user: dict) -> bool:
+    role = user["role"]
+    if role == "admin" or role == "recepcionista":
+        return True
+    if role == "jefe_departamento":
+        return (not doc.get("department")) or doc.get("department") == user.get("department")
+    if role == "personal":
+        return doc.get("assigned_to") == user["id"]
+    return False
+
+
+@api_router.get("/documents/{doc_id}/responses")
+async def list_responses(doc_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.documents.find_one({"id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if not _can_view_doc(doc, user):
+        raise HTTPException(status_code=403, detail="Sin acceso")
+    cursor = db.responses.find({"document_id": doc_id}, {"_id": 0}).sort("created_at", -1)
+    return await cursor.to_list(500)
+
+
+@api_router.post("/documents/{doc_id}/responses")
+async def create_response(doc_id: str, body: ResponseCreate, user: dict = Depends(get_current_user)):
+    doc = await db.documents.find_one({"id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if not _can_view_doc(doc, user):
+        raise HTTPException(status_code=403, detail="Sin acceso")
+    r = {
+        "id": str(uuid.uuid4()),
+        "document_id": doc_id,
+        "template_id": body.template_id,
+        "subject": body.subject,
+        "body": body.body,
+        "status": "borrador",
+        "created_by": user["id"],
+        "created_by_name": user["name"],
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "signed_by": None,
+        "signed_by_name": None,
+        "signed_at": None,
+        "signature_image": None,
+        "signature_hash": None,
+    }
+    await db.responses.insert_one(r)
+    await log_event(doc_id, "respuesta_creada", user, f"Borrador: {body.subject}")
+    r.pop("_id", None)
+    return r
+
+
+@api_router.get("/responses/{rid}")
+async def get_response(rid: str, user: dict = Depends(get_current_user)):
+    r = await db.responses.find_one({"id": rid}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="Respuesta no encontrada")
+    doc = await db.documents.find_one({"id": r["document_id"]})
+    if not doc or not _can_view_doc(doc, user):
+        raise HTTPException(status_code=403, detail="Sin acceso")
+    return r
+
+
+@api_router.patch("/responses/{rid}")
+async def update_response(rid: str, body: ResponseUpdate, user: dict = Depends(get_current_user)):
+    r = await db.responses.find_one({"id": rid})
+    if not r:
+        raise HTTPException(status_code=404, detail="Respuesta no encontrada")
+    if r["status"] == "firmado":
+        raise HTTPException(status_code=400, detail="Respuesta firmada, no editable")
+    if r["created_by"] != user["id"] and user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Sin permisos")
+    update = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not update:
+        raise HTTPException(status_code=400, detail="Sin cambios")
+    update["updated_at"] = now_iso()
+    await db.responses.update_one({"id": rid}, {"$set": update})
+    return await db.responses.find_one({"id": rid}, {"_id": 0})
+
+
+@api_router.post("/responses/{rid}/sign")
+async def sign_response(rid: str, body: ResponseSignIn, user: dict = Depends(get_current_user)):
+    r = await db.responses.find_one({"id": rid})
+    if not r:
+        raise HTTPException(status_code=404, detail="Respuesta no encontrada")
+    if r["status"] == "firmado":
+        raise HTTPException(status_code=400, detail="La respuesta ya está firmada")
+    if not body.signature_image.startswith("data:image"):
+        raise HTTPException(status_code=400, detail="Imagen de firma inválida")
+    if len(body.signature_image) > 1_500_000:
+        raise HTTPException(status_code=400, detail="Imagen de firma demasiado grande")
+    signed_at = now_iso()
+    payload = f"{rid}|{r['document_id']}|{r['subject']}|{r['body']}|{user['id']}|{user['name']}|{signed_at}"
+    sig_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    update = {
+        "status": "firmado",
+        "signed_by": user["id"],
+        "signed_by_name": user["name"],
+        "signed_at": signed_at,
+        "signature_image": body.signature_image,
+        "signature_hash": sig_hash,
+        "updated_at": signed_at,
+    }
+    await db.responses.update_one({"id": rid}, {"$set": update})
+    await log_event(r["document_id"], "respuesta_firmada", user, f"Firmada: {r['subject']} (hash {sig_hash[:12]}…)")
+    return await db.responses.find_one({"id": rid}, {"_id": 0})
+
+
+@api_router.delete("/responses/{rid}")
+async def delete_response(rid: str, user: dict = Depends(get_current_user)):
+    r = await db.responses.find_one({"id": rid})
+    if not r:
+        raise HTTPException(status_code=404, detail="Respuesta no encontrada")
+    if user["role"] != "admin" and not (r["created_by"] == user["id"] and r["status"] == "borrador"):
+        raise HTTPException(status_code=403, detail="Sin permisos")
+    await db.responses.delete_one({"id": rid})
+    await log_event(r["document_id"], "respuesta_eliminada", user, f"{r.get('subject','')}")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Notifications
 # ---------------------------------------------------------------------------
 @api_router.get("/notifications")
@@ -804,6 +1007,54 @@ async def seed_demo_users():
         })
 
 
+async def seed_templates():
+    if await db.templates.count_documents({}) > 0:
+        return
+    defaults = [
+        {
+            "name": "Acuse de recibo",
+            "category": "acuse",
+            "subject": "Acuse de recibo - Expediente {{numero_entrada}}",
+            "body": "Estimado/a {{remitente}},\n\nLe confirmamos la recepción de su documento con número de entrada {{numero_entrada}} relativo a \"{{asunto}}\", registrado el {{fecha_recepcion}}.\n\nSe han iniciado las actuaciones correspondientes y será informado/a oportunamente del trámite.\n\nAtentamente,\n\n{{usuario}}\n{{departamento}}\nHemsa - Servicios Públicos Municipales · San Fernando",
+        },
+        {
+            "name": "Requerimiento de subsanación",
+            "category": "requerimiento",
+            "subject": "Requerimiento de subsanación - Expediente {{numero_entrada}}",
+            "body": "Estimado/a {{remitente}},\n\nEn relación con su documento con número de entrada {{numero_entrada}} (\"{{asunto}}\"), se le requiere para que en el plazo máximo de DIEZ (10) días hábiles aporte la siguiente documentación:\n\n  - [Documento o aclaración requerida]\n\nLe advertimos de que, transcurrido dicho plazo sin atender al requerimiento, se le tendrá por desistido de su solicitud.\n\nAtentamente,\n\n{{usuario}}\n{{departamento}}\nHemsa - Servicios Públicos Municipales · San Fernando",
+        },
+        {
+            "name": "Resolución",
+            "category": "resolucion",
+            "subject": "Resolución expediente {{numero_entrada}}",
+            "body": "RESOLUCIÓN\n\nVisto el expediente {{numero_entrada}} relativo a \"{{asunto}}\" presentado por {{remitente}}, y de conformidad con la normativa aplicable,\n\nRESUELVE:\n\n  PRIMERO. - [Descripción de la resolución].\n  SEGUNDO. - [Acto administrativo o medida acordada].\n\nContra esta resolución podrán interponerse los recursos previstos en la legislación vigente.\n\nEn San Fernando, a {{fecha_actual}}.\n\n{{usuario}}\n{{departamento}}",
+        },
+        {
+            "name": "Notificación general",
+            "category": "notificacion",
+            "subject": "Notificación - {{asunto}}",
+            "body": "Estimado/a {{remitente}},\n\nPor la presente le notificamos en relación al expediente {{numero_entrada}} (\"{{asunto}}\") lo siguiente:\n\n[Contenido de la notificación]\n\nAtentamente,\n\n{{usuario}}\n{{departamento}}\nHemsa - Servicios Públicos Municipales · San Fernando",
+        },
+        {
+            "name": "Informe técnico",
+            "category": "informe",
+            "subject": "Informe técnico - Expediente {{numero_entrada}}",
+            "body": "INFORME TÉCNICO\n\nExpediente: {{numero_entrada}}\nAsunto: {{asunto}}\nSolicitante: {{remitente}}\nFecha: {{fecha_actual}}\n\nANTECEDENTES\n\n  [Descripción de antecedentes]\n\nVALORACIÓN TÉCNICA\n\n  [Análisis y consideraciones]\n\nCONCLUSIONES\n\n  [Conclusiones del informe]\n\n{{usuario}}\n{{departamento}}",
+        },
+    ]
+    now = now_iso()
+    for d in defaults:
+        await db.templates.insert_one({
+            "id": str(uuid.uuid4()),
+            **d,
+            "created_by": "system",
+            "created_by_name": "Sistema",
+            "created_at": now,
+            "updated_at": now,
+        })
+    logger.info(f"Plantillas semilla creadas: {len(defaults)}")
+
+
 @app.on_event("startup")
 async def on_startup():
     await db.users.create_index("email", unique=True)
@@ -814,9 +1065,12 @@ async def on_startup():
     await db.notifications.create_index("user_id")
     await db.document_history.create_index("document_id")
     await db.comments.create_index("document_id")
+    await db.responses.create_index("document_id")
+    await db.templates.create_index("category")
     await db.login_attempts.create_index("identifier")
     await seed_admin()
     await seed_demo_users()
+    await seed_templates()
     init_storage()
 
 
