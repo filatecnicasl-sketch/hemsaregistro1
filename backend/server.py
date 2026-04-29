@@ -1009,8 +1009,6 @@ async def seed_demo_users():
 
 
 async def seed_templates():
-    if await db.templates.count_documents({}) > 0:
-        return
     defaults = [
         {
             "name": "Acuse de recibo",
@@ -1042,9 +1040,55 @@ async def seed_templates():
             "subject": "Informe técnico - Expediente {{numero_entrada}}",
             "body": "INFORME TÉCNICO\n\nExpediente: {{numero_entrada}}\nAsunto: {{asunto}}\nSolicitante: {{remitente}}\nFecha: {{fecha_actual}}\n\nANTECEDENTES\n\n  [Descripción de antecedentes]\n\nVALORACIÓN TÉCNICA\n\n  [Análisis y consideraciones]\n\nCONCLUSIONES\n\n  [Conclusiones del informe]\n\n{{usuario}}\n{{departamento}}",
         },
+        {
+            "name": "Concesión de licencia",
+            "category": "resolucion",
+            "subject": "Concesión de licencia - Expediente {{numero_entrada}}",
+            "body": "RESOLUCIÓN DE CONCESIÓN\n\nVisto el expediente {{numero_entrada}} promovido por {{remitente}}, relativo a \"{{asunto}}\", y comprobada la documentación aportada,\n\nSE RESUELVE:\n\n  PRIMERO. - CONCEDER la licencia solicitada en los términos del proyecto presentado.\n  SEGUNDO. - El titular deberá ajustarse estrictamente al condicionado técnico y a la normativa vigente.\n  TERCERO. - Liquidar las tasas correspondientes conforme a la ordenanza fiscal en vigor.\n\nEn San Fernando, a {{fecha_actual}}.\n\n{{usuario}}\n{{departamento}}\nHemsa - Servicios Públicos Municipales",
+        },
+        {
+            "name": "Denegación de solicitud",
+            "category": "resolucion",
+            "subject": "Denegación - Expediente {{numero_entrada}}",
+            "body": "RESOLUCIÓN DE DENEGACIÓN\n\nVisto el expediente {{numero_entrada}} promovido por {{remitente}}, relativo a \"{{asunto}}\", y considerando los motivos que figuran en el informe técnico obrante en el expediente,\n\nSE RESUELVE:\n\n  PRIMERO. - DENEGAR la solicitud por los motivos expresados en el informe.\n  SEGUNDO. - Notifíquese a la persona interesada con indicación de los recursos pertinentes.\n\nEn San Fernando, a {{fecha_actual}}.\n\n{{usuario}}\n{{departamento}}",
+        },
+        {
+            "name": "Citación a comparecencia",
+            "category": "notificacion",
+            "subject": "Citación - Expediente {{numero_entrada}}",
+            "body": "Estimado/a {{remitente}},\n\nEn relación con el expediente {{numero_entrada}} (\"{{asunto}}\"), se le cita para que comparezca en las dependencias de Hemsa, sita en San Fernando, el día [DÍA] a las [HORA], al objeto de [MOTIVO DE LA CITACIÓN].\n\nDeberá aportar el siguiente documento de identificación: DNI o documento equivalente.\n\nLe recordamos la obligatoriedad de comparecencia conforme al artículo 19 de la Ley 39/2015, de 1 de octubre.\n\nAtentamente,\n\n{{usuario}}\n{{departamento}}",
+        },
+        {
+            "name": "Devolución de tasa",
+            "category": "resolucion",
+            "subject": "Devolución de tasa - Expediente {{numero_entrada}}",
+            "body": "Estimado/a {{remitente}},\n\nEn relación con su solicitud de devolución de la tasa abonada en el expediente {{numero_entrada}} (\"{{asunto}}\"), y verificada la procedencia de la misma,\n\nSE ACUERDA:\n\n  PRIMERO. - Reconocer el derecho a la devolución del importe íntegro abonado.\n  SEGUNDO. - Practicar la devolución mediante transferencia bancaria a la cuenta facilitada por el interesado.\n\nEn San Fernando, a {{fecha_actual}}.\n\n{{usuario}}\n{{departamento}}",
+        },
+        {
+            "name": "Comunicación interna",
+            "category": "notificacion",
+            "subject": "Comunicación interna - {{asunto}}",
+            "body": "MEMORÁNDUM INTERNO\n\nDe: {{usuario}} ({{departamento}})\nA: [Departamento destino]\nFecha: {{fecha_actual}}\nAsunto: {{asunto}} (Expediente {{numero_entrada}})\n\n[Contenido de la comunicación]\n\nSe ruega acuse de recibo y traslado de actuaciones realizadas.\n\n{{usuario}}",
+        },
+        {
+            "name": "Convocatoria de reunión",
+            "category": "notificacion",
+            "subject": "Convocatoria reunión - {{asunto}}",
+            "body": "Estimado/a {{remitente}},\n\nEn relación con el expediente {{numero_entrada}} (\"{{asunto}}\"), se le convoca a reunión que se celebrará el próximo [DÍA] a las [HORA] en las dependencias de Hemsa.\n\nORDEN DEL DÍA:\n  1. Lectura y aprobación, en su caso, del acta de la sesión anterior.\n  2. Estado de tramitación del expediente.\n  3. Acuerdos a adoptar.\n  4. Ruegos y preguntas.\n\nAtentamente,\n\n{{usuario}}\n{{departamento}}",
+        },
+        {
+            "name": "Traslado de expediente",
+            "category": "otro",
+            "subject": "Traslado de expediente {{numero_entrada}}",
+            "body": "Por la presente se da traslado del expediente {{numero_entrada}} (\"{{asunto}}\"), iniciado a instancia de {{remitente}}, al departamento competente para su tramitación.\n\nSe acompaña la documentación íntegra obrante en el expediente.\n\n{{usuario}}\n{{departamento}}\n{{fecha_actual}}",
+        },
     ]
+    inserted = 0
     now = now_iso()
     for d in defaults:
+        existing = await db.templates.find_one({"name": d["name"]})
+        if existing:
+            continue
         await db.templates.insert_one({
             "id": str(uuid.uuid4()),
             **d,
@@ -1053,7 +1097,321 @@ async def seed_templates():
             "created_at": now,
             "updated_at": now,
         })
-    logger.info(f"Plantillas semilla creadas: {len(defaults)}")
+        inserted += 1
+    if inserted:
+        logger.info(f"Plantillas semilla creadas: {inserted}")
+
+
+async def seed_demo_data():
+    """Crea documentos de demostración con ciclo de vida completo (idempotente)."""
+    if await db.documents.count_documents({}) >= 8:
+        logger.info("Demo data: documentos ya existen, saltando seed")
+        return
+
+    users = {}
+    async for u in db.users.find({}, {"_id": 0}):
+        users[u["email"]] = u
+    needed = [
+        "recepcion@gestion.com", "jefe.admin@gestion.com", "jefe.direccion@gestion.com",
+        "jefe.tecnico@gestion.com", "jefe.coord@gestion.com",
+        "personal1@gestion.com", "personal2@gestion.com",
+    ]
+    if not all(e in users for e in needed):
+        logger.warning("Demo data: usuarios demo faltantes, saltando")
+        return
+
+    recep = users["recepcion@gestion.com"]
+    p1 = users["personal1@gestion.com"]  # admin dept
+    p2 = users["personal2@gestion.com"]  # tecnico dept
+    jefes = {
+        "administracion": users["jefe.admin@gestion.com"],
+        "direccion": users["jefe.direccion@gestion.com"],
+        "tecnico": users["jefe.tecnico@gestion.com"],
+        "coordinacion": users["jefe.coord@gestion.com"],
+    }
+
+    samples = [
+        {
+            "subject": "Solicitud licencia de obras menores - C/ Real, 23",
+            "sender": "María García López",
+            "medium": "fisico", "priority": "media",
+            "description": "Reforma interior de vivienda. Adjunto memoria técnica y planos.",
+            "department": "administracion", "assignee": p1,
+            "final_status": "finalizado", "days_ago": 22,
+            "comments": [
+                ("recepcion@gestion.com", "Documentación completa, traslado a Administración."),
+                ("jefe.admin@gestion.com", "Asignado a Juan para revisión."),
+                ("personal1@gestion.com", "Revisión técnica favorable. Procede emitir resolución."),
+            ],
+            "responses": [{"template": "Concesión de licencia", "sign": True, "by": "personal1@gestion.com"}],
+        },
+        {
+            "subject": "Solicitud subvención convocatoria cultura 2026",
+            "sender": "Asociación Cultural La Isla",
+            "medium": "email", "priority": "alta",
+            "description": "Proyecto cultural para festival de música popular en Bahía Sur.",
+            "department": "direccion", "assignee": None,
+            "final_status": "en_proceso", "days_ago": 16,
+            "comments": [
+                ("recepcion@gestion.com", "Reparto a Dirección por importe."),
+                ("jefe.direccion@gestion.com", "Pendiente informe económico."),
+            ],
+        },
+        {
+            "subject": "Avería grave alumbrado público en Pza. del Carmen",
+            "sender": "AAVV Centro Histórico",
+            "medium": "telefono", "priority": "urgente",
+            "description": "Tres farolas apagadas desde anoche. Riesgo nocturno para los vecinos.",
+            "department": "tecnico", "assignee": p2,
+            "final_status": "en_proceso", "days_ago": 11,
+            "comments": [
+                ("recepcion@gestion.com", "Aviso telefónico recibido a las 09:15."),
+                ("jefe.tecnico@gestion.com", "Sofía: revisión urgente esta tarde."),
+                ("personal2@gestion.com", "Inspección realizada. Sustitución programada para mañana."),
+            ],
+        },
+        {
+            "subject": "Convenio de colaboración con Universidad de Cádiz",
+            "sender": "Universidad de Cádiz - Vicerrectorado",
+            "medium": "email", "priority": "alta",
+            "description": "Convenio marco para prácticas curriculares de estudiantes.",
+            "department": "coordinacion", "assignee": None,
+            "final_status": "asignado", "days_ago": 9,
+            "comments": [("jefe.coord@gestion.com", "En estudio jurídico."),],
+        },
+        {
+            "subject": "Reclamación recibo de basura nº 4521/2025",
+            "sender": "Juan Martínez Ruiz",
+            "medium": "fisico", "priority": "media",
+            "description": "Solicita revisión por error en metros cuadrados gravados.",
+            "department": "administracion", "assignee": None,
+            "final_status": "asignado", "days_ago": 7,
+            "comments": [("jefe.admin@gestion.com", "Pendiente comprobación catastral."),],
+        },
+        {
+            "subject": "Informe ambiental sobre vertido en marisma de Camposoto",
+            "sender": "Junta de Andalucía - Consejería Sostenibilidad",
+            "medium": "email", "priority": "alta",
+            "description": "Requerimiento de informe sobre incidente ambiental detectado.",
+            "department": "tecnico", "assignee": p2,
+            "final_status": "en_proceso", "days_ago": 5,
+            "responses": [{"template": "Informe técnico", "sign": False, "by": "personal2@gestion.com"}],
+        },
+        {
+            "subject": "Autorización paso vía pública - Procesión San Marcos",
+            "sender": "Hermandad San Marcos Evangelista",
+            "medium": "fisico", "priority": "media",
+            "description": "Solicitud de autorización para itinerario procesional el 25 de abril.",
+            "department": "coordinacion", "assignee": None,
+            "final_status": "repartido", "days_ago": 4,
+        },
+        {
+            "subject": "Acceso a información pública - Expedientes ejercicio 2025",
+            "sender": "Diario Bahía de Cádiz",
+            "medium": "web", "priority": "media",
+            "description": "Solicitud al amparo de la Ley 19/2013 de transparencia.",
+            "department": None, "assignee": None,
+            "final_status": "recibido", "days_ago": 3,
+        },
+        {
+            "subject": "Queja sobre líneas de transporte urbano 4 y 7",
+            "sender": "José Antonio Alonso Pérez",
+            "medium": "web", "priority": "media",
+            "description": "Frecuencias insuficientes en horario de mañana.",
+            "department": "coordinacion", "assignee": None,
+            "final_status": "asignado", "days_ago": 2,
+        },
+        {
+            "subject": "Memoria anual de servicios públicos 2025",
+            "sender": "Dirección General Hemsa",
+            "medium": "email", "priority": "baja",
+            "description": "Memoria de gestión anual para archivo y publicación.",
+            "department": "direccion", "assignee": None,
+            "final_status": "archivado", "days_ago": 28,
+        },
+        {
+            "subject": "Petición instalación pasarela peatonal Bahía Sur",
+            "sender": "Plataforma Vecinal Bahía Sur",
+            "medium": "fisico", "priority": "alta",
+            "description": "Recogida de 412 firmas solicitando paso peatonal seguro.",
+            "department": None, "assignee": None,
+            "final_status": "recibido", "days_ago": 1,
+        },
+        {
+            "subject": "Solicitud copia compulsada de acta - Sesión 12/03/2026",
+            "sender": "Manuel Pérez Domínguez",
+            "medium": "fisico", "priority": "baja",
+            "description": "Solicitud de certificación literal del acuerdo plenario.",
+            "department": "administracion", "assignee": p1,
+            "final_status": "finalizado", "days_ago": 14,
+            "responses": [{"template": "Acuse de recibo", "sign": True, "by": "personal1@gestion.com"}],
+        },
+        {
+            "subject": "Solicitud poda urgente arbolado Av. Constitución",
+            "sender": "Comunidad de Propietarios Edif. Mar Azul",
+            "medium": "email", "priority": "media",
+            "description": "Ramas en contacto con cableado eléctrico.",
+            "department": "tecnico", "assignee": p2,
+            "final_status": "asignado", "days_ago": 6,
+        },
+    ]
+
+    now_dt = datetime.now(timezone.utc)
+    inserted = 0
+    for s in samples:
+        days = s["days_ago"]
+        created = (now_dt - timedelta(days=days, hours=2)).isoformat()
+        entry = await _next_entry_number()
+        doc_id = str(uuid.uuid4())
+
+        doc = {
+            "id": doc_id,
+            "entry_number": entry,
+            "received_at": created,
+            "sender": s["sender"],
+            "subject": s["subject"],
+            "description": s.get("description", ""),
+            "medium": s["medium"],
+            "priority": s["priority"],
+            "status": "recibido",
+            "department": None,
+            "assigned_to": None,
+            "assigned_to_name": None,
+            "registered_by": recep["id"],
+            "registered_by_name": recep["name"],
+            "file_path": None,
+            "file_name": None,
+            "file_size": None,
+            "content_type": None,
+            "created_at": created,
+            "updated_at": created,
+        }
+        await db.documents.insert_one(doc)
+        await db.document_history.insert_one({
+            "id": str(uuid.uuid4()), "document_id": doc_id, "action": "registrado",
+            "by_user_id": recep["id"], "by_user_name": recep["name"],
+            "details": f"Documento registrado: {entry}", "timestamp": created,
+        })
+
+        # Repartir
+        target_dept = s.get("department")
+        target_status = s.get("final_status", "recibido")
+        assignee = s.get("assignee")
+        if target_dept:
+            t1 = (now_dt - timedelta(days=max(0, days - 1), hours=1)).isoformat()
+            await db.documents.update_one(
+                {"id": doc_id},
+                {"$set": {"department": target_dept, "status": "repartido", "updated_at": t1}},
+            )
+            await db.document_history.insert_one({
+                "id": str(uuid.uuid4()), "document_id": doc_id, "action": "repartido",
+                "by_user_id": recep["id"], "by_user_name": recep["name"],
+                "details": f"Asignado al departamento {target_dept}", "timestamp": t1,
+            })
+
+        # Asignar persona
+        if assignee:
+            t2 = (now_dt - timedelta(days=max(0, days - 2))).isoformat()
+            jefe = jefes.get(target_dept) or recep
+            await db.documents.update_one(
+                {"id": doc_id},
+                {"$set": {
+                    "assigned_to": assignee["id"],
+                    "assigned_to_name": assignee["name"],
+                    "status": "asignado",
+                    "updated_at": t2,
+                }},
+            )
+            await db.document_history.insert_one({
+                "id": str(uuid.uuid4()), "document_id": doc_id, "action": "asignado",
+                "by_user_id": jefe["id"], "by_user_name": jefe["name"],
+                "details": f"Asignado a {assignee['name']}", "timestamp": t2,
+            })
+
+        # Estado final si difiere de los anteriores
+        if target_status not in ("recibido",) and (
+            (not target_dept and target_status != "recibido")
+            or (target_dept and not assignee and target_status not in ("recibido", "repartido"))
+            or (assignee and target_status not in ("recibido", "repartido", "asignado"))
+        ):
+            t3 = (now_dt - timedelta(days=max(0, days - 3))).isoformat()
+            actor = assignee or jefes.get(target_dept) or recep
+            await db.documents.update_one(
+                {"id": doc_id},
+                {"$set": {"status": target_status, "updated_at": t3}},
+            )
+            await db.document_history.insert_one({
+                "id": str(uuid.uuid4()), "document_id": doc_id, "action": "estado_cambiado",
+                "by_user_id": actor["id"], "by_user_name": actor["name"],
+                "details": f"Estado: {target_status}", "timestamp": t3,
+            })
+
+        # Comentarios
+        for i, (email, text) in enumerate(s.get("comments", [])):
+            u = users.get(email, recep)
+            ts = (now_dt - timedelta(days=max(0, days - 1 - i), hours=12)).isoformat()
+            await db.comments.insert_one({
+                "id": str(uuid.uuid4()), "document_id": doc_id,
+                "user_id": u["id"], "user_name": u["name"],
+                "text": text, "created_at": ts,
+            })
+
+        # Respuestas
+        for r in s.get("responses", []):
+            tpl = await db.templates.find_one({"name": r["template"]})
+            if not tpl:
+                continue
+            author = users.get(r.get("by"), p1)
+            data = {
+                "numero_entrada": entry,
+                "remitente": s["sender"],
+                "asunto": s["subject"],
+                "fecha_actual": now_dt.strftime("%d de %B de %Y"),
+                "fecha_recepcion": now_dt.strftime("%d/%m/%Y"),
+                "usuario": author["name"],
+                "departamento": (target_dept or "").capitalize(),
+            }
+            import re
+            def _rep(m):
+                return data.get(m.group(1), m.group(0))
+            subject = re.sub(r"\{\{\s*(\w+)\s*\}\}", _rep, tpl["subject"])
+            body = re.sub(r"\{\{\s*(\w+)\s*\}\}", _rep, tpl["body"])
+            t_resp = (now_dt - timedelta(days=max(0, days - 4))).isoformat()
+            resp_id = str(uuid.uuid4())
+            resp_doc = {
+                "id": resp_id, "document_id": doc_id, "template_id": tpl["id"],
+                "subject": subject, "body": body, "status": "borrador",
+                "created_by": author["id"], "created_by_name": author["name"],
+                "created_at": t_resp, "updated_at": t_resp,
+                "signed_by": None, "signed_by_name": None, "signed_at": None,
+                "signature_image": None, "signature_hash": None,
+            }
+            if r.get("sign"):
+                # Firma demo (PNG 1x1 transparente con leyenda en log)
+                signed_at = (now_dt - timedelta(days=max(0, days - 5))).isoformat()
+                payload = f"{resp_id}|{doc_id}|{subject}|{body}|{author['id']}|{author['name']}|{signed_at}"
+                sig_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+                resp_doc.update({
+                    "status": "firmado",
+                    "signed_by": author["id"], "signed_by_name": author["name"],
+                    "signed_at": signed_at,
+                    "signature_image": (
+                        "data:image/svg+xml;base64,"
+                        "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCAyMjAgNjAiPjxwYXRoIGQ9Ik04IDQwIFEyMCAxMCAzNSA0MCBUNjUgMzUgUTgwIDEwIDk1IDQwIFQxNDAgMzAgUTE2MCAxNSAxNzUgMzUgVDIxMCAyOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMGYxNzJhIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQwIDQ4IFE3MCA0NSAxMTAgNDcgVDE5MCA0NSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMGYxNzJhIiBzdHJva2Utd2lkdGg9IjEuMiIgb3BhY2l0eT0iLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg=="
+                    ),
+                    "signature_hash": sig_hash,
+                    "updated_at": signed_at,
+                })
+                await db.document_history.insert_one({
+                    "id": str(uuid.uuid4()), "document_id": doc_id, "action": "respuesta_firmada",
+                    "by_user_id": author["id"], "by_user_name": author["name"],
+                    "details": f"Firmada: {subject}", "timestamp": signed_at,
+                })
+            await db.responses.insert_one(resp_doc)
+
+        inserted += 1
+
+    logger.info(f"Demo data: {inserted} documentos generados")
 
 
 @app.on_event("startup")
@@ -1072,6 +1430,7 @@ async def on_startup():
     await seed_admin()
     await seed_demo_users()
     await seed_templates()
+    await seed_demo_data()
     init_storage()
 
 
